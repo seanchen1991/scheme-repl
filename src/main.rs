@@ -34,10 +34,12 @@ enum Expression {
 impl fmt::Display for Expression {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let str = match self {
-      Expression::Bool(b)   => b.to_string(),
+      Expression::Bool(b) => {
+        if *b { "#t".to_string() } else { "#f".to_string() }
+      },
       Expression::Symbol(s) => s.clone(),
       Expression::Number(n) => n.to_string(),
-      Expression::List(l)   => {
+      Expression::List(l) => {
         let chars: Vec<String> = l.iter()
           .map(|c| c.to_string())
           .collect();
@@ -82,7 +84,7 @@ fn read_sequence<'a>(tokens: &'a [String]) -> SResult<(Expression, &'a [String])
 
   loop {
     let (next, rest) = ts.split_first().ok_or(
-      SErr::Reason("Could not find closing `)`".to_string())
+      SErr::Reason("could not find closing `)`".to_string())
     )?;
     
     if next == ")" {
@@ -97,9 +99,9 @@ fn read_sequence<'a>(tokens: &'a [String]) -> SResult<(Expression, &'a [String])
 
 fn parse_atom(token: &str) -> Expression {
   match token.as_ref() {
-    "true" => Expression::Bool(true),
-    "false" => Expression::Bool(false),
-    _ => {
+    "#t" => Expression::Bool(true),
+    "#f" => Expression::Bool(false),
+    _    => {
       match token.parse() {
         Ok(n)  => Expression::Number(n),
         Err(_) => Expression::Symbol(token.to_string().clone())
@@ -121,7 +123,7 @@ fn parse_float(exp: &Expression) -> SResult<f64> {
   }
 }
 
-macro_rules! check_tonicity {
+macro_rules! comparison {
   ($check_fn:expr) => {{
     |args: &[Expression]| -> SResult<Expression> {
       let floats = parse_list_of_floats(args)?;
@@ -135,6 +137,7 @@ macro_rules! check_tonicity {
           None => true
         }
       };
+
       Ok(Expression::Bool(f(first, rest)))
     }
   }}
@@ -163,27 +166,27 @@ fn init_env() -> Env {
 
   operations.insert(
     "=".to_string(),
-    Expression::Func(check_tonicity!(|a, b| a == b))
+    Expression::Func(comparison!(|a, b| a == b))
   );
 
   operations.insert(
     ">".to_string(),
-    Expression::Func(check_tonicity!(|a, b| a > b))
+    Expression::Func(comparison!(|a, b| a > b))
   );
 
   operations.insert(
     "<".to_string(),
-    Expression::Func(check_tonicity!(|a, b| a < b))
+    Expression::Func(comparison!(|a, b| a < b))
   );
 
   operations.insert(
     ">=".to_string(),
-    Expression::Func(check_tonicity!(|a, b| a >= b))
+    Expression::Func(comparison!(|a, b| a >= b))
   );
 
   operations.insert(
     "<=".to_string(),
-    Expression::Func(check_tonicity!(|a, b| a <= b))
+    Expression::Func(comparison!(|a, b| a <= b))
   );
 
   Env { operations }
@@ -240,13 +243,14 @@ fn eval_keyword(
 fn eval_if(args: &[Expression], env: &mut Env) -> SResult<Expression> {
   let criteria = args.first().ok_or(SErr::Reason("expected criteria".to_string()))?;
   let criteria_eval = eval(criteria, env)?;
+
   match criteria_eval {
     Expression::Bool(b) => {
-      let form_idx = if b { 1 } else { 2 };
-      let res_form = args.get(form_idx).ok_or(
-        SErr::Reason(format!("expected form index: {}", form_idx))
+      let branch = if b { 1 } else { 2 };
+      let result = args.get(branch).ok_or(
+        SErr::Reason(format!("expected branching conditional: {}", branch))
       )?;
-      eval(res_form, env)
+      eval(result, env)
     },
     _ => Err(
       SErr::Reason(format!("unexpected criteria: '{}'", criteria.to_string()))
@@ -256,67 +260,56 @@ fn eval_if(args: &[Expression], env: &mut Env) -> SResult<Expression> {
 
 fn eval_define(args: &[Expression], env: &mut Env) -> SResult<Expression> {
   if args.len() > 2 {
-    return Err(
-      SErr::Reason("`define` keyword only accepts two forms".to_string())
-    );
+    return Err(SErr::Reason("`define` keyword only accepts two forms".to_string()));
   }
 
-  let (first, rest) = args.split_first().ok_or(
+  let (name, rest) = args.split_first().ok_or(
     SErr::Reason("expected first form".to_string())
   )?;
-  let first_str = match first {
+  let name_str = match name {
     Expression::Symbol(s) => Ok(s.clone()),
-    _ => Err(
-      SErr::Reason("expected first form to be a symbol".to_string()
-    ))
+    _ => Err(SErr::Reason("expected first form to be a symbol".to_string()))
   }?;
 
-  if env.operations.contains_key(&first_str) {
-    return Err(
-      SErr::Reason("can not overwrite a reserved operation".to_string())
-    );
+  if env.operations.contains_key(&name_str) {
+    return Err(SErr::Reason("can not overwrite a reserved operation".to_string()));
   }  
 
-  let second_form = rest.get(0).ok_or(
-    SErr::Reason("expected second form".to_string())
+  let value = rest.get(0).ok_or(
+    SErr::Reason("expected a value form".to_string())
   )?;
-  let second_eval = eval(second_form, env)?;
+  let value_eval = eval(value, env)?;
 
-  env.operations.insert(first_str, second_eval);
-  Ok(first.clone())
+  env.operations.insert(name_str, value_eval);
+  Ok(name.clone())
 }
-
 
 fn eval_set(args: &[Expression], env: &mut Env) -> SResult<Expression> {
   if args.len() > 2 {
-    return Err(
-      SErr::Reason("`define` keyword only accepts two forms".to_string())
-    );
+    return Err(SErr::Reason("`define` keyword only accepts two forms".to_string()));
   }
 
-  let (first, rest) = args.split_first().ok_or(
+  let (name, rest) = args.split_first().ok_or(
     SErr::Reason("expected first form".to_string())
   )?;
-  let first_str = match first {
+  let name_str = match name {
     Expression::Symbol(s) => Ok(s.clone()),
-    _ => Err(
-      SErr::Reason("expected first form to be a symbol".to_string()
-    ))
+    _ => Err(SErr::Reason("expected name to be a symbol".to_string()))
   }?;
 
-  let second_form = rest.get(0).ok_or(
-    SErr::Reason("expected second form".to_string())
+  let value = rest.get(0).ok_or(
+    SErr::Reason("expected a value form".to_string())
   )?;
-  let second_eval = eval(second_form, env)?;
+  let value_eval = eval(value, env)?;
 
-  match env.operations.get(&first_str) {
+  match env.operations.get(&name_str) {
     Some(_) => {
-      env.operations.insert(first_str, second_eval);
+      env.operations.insert(name_str, value_eval);
     },
-    None => return Err(SErr::Reason("can not set! a value to an undefined variable".to_string()))
+    None => return Err(SErr::Reason(format!("global variable '{}' is not defined", name_str)))
   }
 
-  Ok(first.clone())
+  Ok(name.clone())
 }
 
 fn parse_eval(input: String, env: &mut Env) -> SResult<Expression> {
