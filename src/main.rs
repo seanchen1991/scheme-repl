@@ -1,5 +1,6 @@
 use std::io;
 use std::fmt;
+use std::rc::Rc;
 use std::io::prelude::*;
 use std::collections::HashMap;
 
@@ -28,7 +29,8 @@ enum Expression {
   Symbol(String),
   Number(f64),
   List(Vec<Expression>),
-  Func(fn(&[Expression]) -> SResult<Expression>)
+  Func(fn(&[Expression]) -> SResult<Expression>),
+  Lambda(SLambda)
 }
 
 impl fmt::Display for Expression {
@@ -46,15 +48,23 @@ impl fmt::Display for Expression {
         
         format!("({})", chars.join(","))
       },
-      Expression::Func(_) => "Function {}".to_string()
+      Expression::Func(_) => "Function: {}".to_string(),
+      Expression::Lambda(_) => "Lambda: {}".to_string()
     };
 
     write!(f, "{}", str)
   }
 }
 
-struct Env {
-  operations: HashMap<String, Expression>
+struct Env<'a> {
+  operations: HashMap<String, Expression>,
+  scope: Option<&'a Env<'a>>
+}
+
+#[derive(Clone)]
+struct SLambda {
+  params: Rc<Expression>,
+  body: Rc<Expression>
 }
 
 fn tokenize(expression: String) -> Vec<String> {
@@ -123,6 +133,25 @@ fn parse_float(exp: &Expression) -> SResult<f64> {
   }
 }
 
+fn parse_list_of_symbols(args: Rc<Expression>) -> SResult<Vec<String>> {
+  let list = match args.as_ref() {
+    Expression::List(l) => Ok(l.clone()),
+    _ => Err(SErr::Reason(
+      "expected args form to be a list".to_string()
+    ))
+  }?;
+  list.iter()
+    .map(|x| {
+      match x {
+        Expression::Symbol(s) => Ok(s.clone()),
+        _ => Err(SErr::Reason(
+          "expected symbols in the argument list".to_string()
+        ))
+      }
+    })
+    .collect()
+}
+
 macro_rules! comparison {
   ($check_fn:expr) => {{
     |args: &[Expression]| -> SResult<Expression> {
@@ -143,7 +172,7 @@ macro_rules! comparison {
   }}
 }
 
-fn init_env() -> Env {
+fn init_env<'a>() -> Env<'a> {
   let mut operations: HashMap<String, Expression> = HashMap::new();
   
   operations.insert(
@@ -158,9 +187,33 @@ fn init_env() -> Env {
     "-".to_string(),
     Expression::Func(|args: &[Expression]| -> SResult<Expression> {
       let floats = parse_list_of_floats(args)?;
-      let (first, rest) = floats.split_first().ok_or(SErr::Reason("expected at least one number".to_string()))?;
+      let (first, rest) = floats.split_first().ok_or(
+        SErr::Reason("expected at least one number".to_string())
+      )?;
       let sum_of_rest: f64 = rest.iter().sum(); 
       Ok(Expression::Number(first - sum_of_rest))
+    })
+  );
+
+  operations.insert(
+    "*".to_string(),
+    Expression::Func(|args: &[Expression]| -> SResult<Expression> {
+      let product = parse_list_of_floats(args)?.iter().product();
+      Ok(Expression::Number(product))
+    })
+  );
+
+  operations.insert(
+    "/".to_string(),
+    Expression::Func(|args: &[Expression]| -> SResult<Expression> {
+      let floats = parse_list_of_floats(args)?;
+      let first = *floats.first().ok_or(
+        SErr::Reason("expected at least one number".to_string())
+      )?;
+      let result = floats[1..].iter()
+        .filter(|x| **x != 0.0)
+        .fold(first, |num, div| num / div);
+      Ok(Expression::Number(result))
     })
   );
 
@@ -189,37 +242,87 @@ fn init_env() -> Env {
     Expression::Func(comparison!(|a, b| a <= b))
   );
 
-  Env { operations }
+  Env { operations, scope: None }
+}
+
+fn init_lambda_env<'a>(
+  params: Rc<Expression>,
+  args: &[Expression],
+  outer: &'a mut Env,
+) -> SResult<Env<'a>> {
+  let symbols = parse_list_of_symbols(params)?;
+
+  if symbols.len() != args.len() {
+    return Err(SErr::Reason(
+      format!("expected {} args, got {}", symbols.len(), args.len())
+    ));
+  }
+
+  let evaluated_forms = eval_forms(args, outer)?;
+  let mut operations: HashMap<String, Expression> = HashMap::new();
+
+  for (k, v) in symbols.iter().zip(evaluated_forms.iter()) {
+    operations.insert(k.clone(), v.clone());
+  }
+
+  Ok(
+    Env {
+      operations,
+      scope: Some(outer)
+    }
+  )
+}
+
+fn env_get(s: &str, env: &Env) -> Option<Expression> {
+  match env.operations.get(s) {
+    Some(expr) => Some(expr.clone()),
+    None => {
+      match &env.scope {
+        Some(outer) => env_get(s, &outer),
+        None => None
+      }
+    }
+  }
 }
 
 fn eval(exp: &Expression, env: &mut Env) -> SResult<Expression> {
   match exp {
-    Expression::Bool(_)   => Ok(exp.clone()), 
-    Expression::Symbol(s) => env.operations.get(s).ok_or(
-      SErr::Reason(format!("unexpected symbol: '{}'", s)
-    ))
-    .map(|x| x.clone()),
+    Expression::Bool(_)   => Ok(exp.clone()),
+    Expression::Symbol(s) => env_get(s, env).ok_or(
+      SErr::Reason(format!("unexpected symbol: '{}'", s))
+    ),
     Expression::Number(_) => Ok(exp.clone()),
     Expression::List(l) => {
-      let (first, args) = l.split_first().ok_or(SErr::Reason("expected a non-empty list".to_string()))?;
+      let (first, args) = l.split_first().ok_or(
+        SErr::Reason("expected a non-empty list".to_string())
+      )?;
       match eval_keyword(first, args, env) {
         Some(result) => result,
         None => {
           let first_eval = eval(first, env)?;
           match first_eval {
             Expression::Func(f) => {
-              let args_eval = args.iter()
-                .map(|x| eval(x, env))
-                .collect::<SResult<Vec<Expression>>>();
-              f(&args_eval?)
+              f(&eval_forms(args, env)?)
+            },
+            Expression::Lambda(l) => {
+              let new_env = &mut init_lambda_env(l.params, args, env)?;
+              eval(&l.body, new_env)
             },
             _ => Err(SErr::Reason("first form must be a function".to_string()))
           }
         }
       }
     },
-    Expression::Func(_) => Err(SErr::Reason("unexpected form".to_string()))
+    Expression::Func(_) => Err(SErr::Reason("unexpected form".to_string())),
+    Expression::Lambda(_) => Err(SErr::Reason("unexpected form".to_string()))
   }
+}
+
+fn eval_forms(args: &[Expression], env: &mut Env) -> SResult<Vec<Expression>> {
+  args
+    .iter()
+    .map(|x| eval(x, env))
+    .collect()
 }
 
 fn eval_keyword(
@@ -230,9 +333,10 @@ fn eval_keyword(
   match expr {
     Expression::Symbol(s) => {
       match s.as_ref() {
-        "if" => Some(eval_if(args, env)),
+        "if"     => Some(eval_if(args, env)),
         "define" => Some(eval_define(args, env)),
-        "set!" => Some(eval_set(args, env)),
+        "set!"   => Some(eval_set(args, env)),
+        "lambda" => Some(eval_lambda(args)),
         _ => None,
       }
     },
@@ -310,6 +414,22 @@ fn eval_set(args: &[Expression], env: &mut Env) -> SResult<Expression> {
   }
 
   Ok(name.clone())
+}
+
+fn eval_lambda(args: &[Expression]) -> SResult<Expression> {
+  if args.len() > 2 {
+    return Err(SErr::Reason("lambda requires exactly two forms".to_string()));
+  }
+
+  let params = args.first().ok_or(SErr::Reason("expected lambda param".to_string()))?;
+  let body = args.get(1).ok_or(SErr::Reason("expected lambda body".to_string()))?;
+
+  Ok(Expression::Lambda(
+    SLambda {
+      params: Rc::new(params.clone()),
+      body: Rc::new(body.clone())
+    }
+  ))
 }
 
 fn parse_eval(input: String, env: &mut Env) -> SResult<Expression> {
