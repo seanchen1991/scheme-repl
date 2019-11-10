@@ -11,6 +11,7 @@ mod repl;
 mod environment;
 
 use crate::serr::SErr;
+use crate::tokenizer::tokenize;
 use crate::evaluator::parse_eval;
 use crate::environment::init_env;
 
@@ -23,8 +24,9 @@ fn main() {
   } else if args.len() == 2 {
     let path = &args[1];
     let input = fs::read_to_string(path).expect("Can't read file");
+    let tokens = tokenize(&mut input.chars().peekable());
 
-    match parse_eval(input, env) {
+    match parse_eval(tokens, env) {
       Ok(result) => println!("> {}", result),
       Err(e) => match e {
         SErr::Reason(msg) => println!("> Error: {}", msg)

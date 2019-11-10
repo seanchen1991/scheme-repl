@@ -3,7 +3,6 @@ use std::rc::Rc;
 use crate::serr::{SErr, SResult};
 use crate::expression::Expression;
 use crate::parser::parse;
-use crate::tokenizer::tokenize;
 use crate::environment::{
   Env,
   SLambda,
@@ -158,9 +157,13 @@ fn eval_lambda(args: &[Expression]) -> SResult<Expression> {
   ))
 }
 
-pub fn parse_eval(input: String, env: &mut Env) -> SResult<Expression> {
-  let (parsed, _) = parse(&tokenize(&mut input.chars().peekable()))?;
+pub fn parse_eval(input: Vec<String>, env: &mut Env) -> SResult<Expression> {
+  let (parsed, unparsed) = parse(&input)?;
   let evaluated = eval(&parsed, env)?;
-  
-  Ok(evaluated)
+
+  if !unparsed.is_empty() {
+    return parse_eval(unparsed.to_vec(), env);
+  } else {
+    Ok(evaluated)
+  }
 }

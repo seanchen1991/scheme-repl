@@ -5,12 +5,12 @@ use crate::expression::Expression;
 
 pub fn parse<'a>(tokens: &'a [String]) -> SResult<(Expression, &'a [String])> {
   let (first, rest) = tokens.split_first().ok_or(
-    SErr::Reason("could not get Expression".to_string())
+    SErr::Reason("Could not get Expression".to_string())
   )?;
   
   match &first[..] {
     "(" => read_sequence(rest),
-    ")" => Err(SErr::Reason("unexpected `)`".to_string())),
+    ")" => Err(SErr::Reason("Unexpected `)`".to_string())),
     _   => Ok((parse_atom(first), rest)),
   }
 }
@@ -21,7 +21,7 @@ fn read_sequence<'a>(tokens: &'a [String]) -> SResult<(Expression, &'a [String])
 
   loop {
     let (next, rest) = ts.split_first().ok_or(
-      SErr::Reason("could not find closing `)`".to_string())
+      SErr::Reason("Could not find closing `)`".to_string())
     )?;
     
     if next == ")" {
@@ -64,7 +64,7 @@ pub fn parse_list_of_symbols(args: Rc<Expression>) -> SResult<Vec<String>> {
   let list = match args.as_ref() {
     Expression::List(l) => Ok(l.clone()),
     _ => Err(SErr::Reason(
-      "expected args form to be a list".to_string()
+      "Expected args form to be a list".to_string()
     ))
   }?;
   list.iter()
@@ -72,7 +72,7 @@ pub fn parse_list_of_symbols(args: Rc<Expression>) -> SResult<Vec<String>> {
       match x {
         Expression::Symbol(s) => Ok(s.clone()),
         _ => Err(SErr::Reason(
-          "expected symbols in the argument list".to_string()
+          "Expected symbols in the argument list".to_string()
         ))
       }
     })
@@ -85,7 +85,7 @@ macro_rules! comparison {
     |args: &[Expression]| -> SResult<Expression> {
       let floats = parse_list_of_floats(args)?;
       let (first, rest) = floats.split_first().ok_or(
-        SErr::Reason("expected at least one number".to_string())
+        SErr::Reason("Expected at least one number".to_string())
       )?;
 
       fn f(prev: &f64, ts: &[f64]) -> bool {
