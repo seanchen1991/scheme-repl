@@ -81,6 +81,61 @@ pub fn init_env<'a>() -> Env<'a> {
   );
 
   builtins.insert(
+    "min".to_string(),
+    Expression::Func(|args: &[Expression]| -> SResult<Expression> {
+      let floats = parse_list_of_floats(args)?;
+      let first = *floats.first().ok_or(
+        SErr::Reason("`min` operation expects at least one number".to_string())
+      )?;
+      let min = floats.iter().fold(first, |acc, curr| acc.min(*curr));
+
+      Ok(Expression::Number(min))
+    })
+  );
+
+  builtins.insert(
+    "abs".to_string(),
+    Expression::Func(|args: &[Expression]| -> SResult<Expression> {
+      let float = parse_list_of_floats(args)?;
+
+      if float.len() > 1 {
+        return Err(SErr::Reason("`abs` operation expects a single number".to_string()));
+      }
+
+      Ok(Expression::Number(float[0].abs()))
+    })
+  );
+
+  builtins.insert(
+    "expt".to_string(),
+    Expression::Func(|args: &[Expression]| -> SResult<Expression> {
+      let floats = parse_list_of_floats(args)?;
+
+      if floats.len() != 2 {
+        return Err(SErr::Reason("`expt` operation expects exactly two numbers".to_string()));
+      }
+
+      let operand = floats.first().unwrap();
+      let exponent = floats.last().unwrap();
+
+      Ok(Expression::Number(operand.powf(*exponent)))
+    })
+  );
+
+  builtins.insert(
+    "round".to_string(),
+    Expression::Func(|args: &[Expression]| -> SResult<Expression> {
+      let float = parse_list_of_floats(args)?;
+
+      if float.len() > 1 {
+        return Err(SErr::Reason("`round` operation expects a single number".to_string()));
+      }
+
+      Ok(Expression::Number(float[0].round()))
+    }) 
+  );
+
+  builtins.insert(
     "=".to_string(),
     Expression::Func(comparison!(|a, b| a == b))
   );
