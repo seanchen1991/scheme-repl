@@ -10,6 +10,7 @@ use crate::parser::{
 };
 
 pub struct Env<'a> {
+  pub builtins: HashMap<String, Expression>,
   pub operations: HashMap<String, Expression>,
   pub parent_scope: Option<&'a Env<'a>>
 }
@@ -21,9 +22,10 @@ pub struct SLambda {
 }
 
 pub fn init_env<'a>() -> Env<'a> {
-  let mut operations: HashMap<String, Expression> = HashMap::new();
+  let operations: HashMap<String, Expression> = HashMap::new();
+  let mut builtins: HashMap<String, Expression> = HashMap::new();
   
-  operations.insert(
+  builtins.insert(
     "+".to_string(),
     Expression::Func(|args: &[Expression]| -> SResult<Expression> {
       let sum = parse_list_of_floats(args)?.iter().sum();
@@ -31,7 +33,7 @@ pub fn init_env<'a>() -> Env<'a> {
     })
   );
   
-  operations.insert(
+  builtins.insert(
     "-".to_string(),
     Expression::Func(|args: &[Expression]| -> SResult<Expression> {
       let floats = parse_list_of_floats(args)?;
@@ -43,7 +45,7 @@ pub fn init_env<'a>() -> Env<'a> {
     })
   );
 
-  operations.insert(
+  builtins.insert(
     "*".to_string(),
     Expression::Func(|args: &[Expression]| -> SResult<Expression> {
       let product = parse_list_of_floats(args)?.iter().product();
@@ -51,7 +53,7 @@ pub fn init_env<'a>() -> Env<'a> {
     })
   );
 
-  operations.insert(
+  builtins.insert(
     "/".to_string(),
     Expression::Func(|args: &[Expression]| -> SResult<Expression> {
       let floats = parse_list_of_floats(args)?;
@@ -65,32 +67,45 @@ pub fn init_env<'a>() -> Env<'a> {
     })
   );
 
-  operations.insert(
+  builtins.insert(
+    "max".to_string(),
+    Expression::Func(|args: &[Expression]| -> SResult<Expression> {
+      let floats = parse_list_of_floats(args)?;
+      let first = *floats.first().ok_or(
+        SErr::Reason("`max` operation expects at least one number".to_string())
+      )?;
+      let max = floats.iter().fold(first, |acc, curr| acc.max(*curr));
+
+      Ok(Expression::Number(max))
+    })
+  );
+
+  builtins.insert(
     "=".to_string(),
     Expression::Func(comparison!(|a, b| a == b))
   );
 
-  operations.insert(
+  builtins.insert(
     ">".to_string(),
     Expression::Func(comparison!(|a, b| a > b))
   );
 
-  operations.insert(
+  builtins.insert(
     "<".to_string(),
     Expression::Func(comparison!(|a, b| a < b))
   );
 
-  operations.insert(
+  builtins.insert(
     ">=".to_string(),
     Expression::Func(comparison!(|a, b| a >= b))
   );
 
-  operations.insert(
+  builtins.insert(
     "<=".to_string(),
     Expression::Func(comparison!(|a, b| a <= b))
   );
 
-  Env { operations, parent_scope: None }
+  Env { builtins, operations, parent_scope: None }
 }
 
 pub fn init_lambda_env<'a>(
@@ -116,18 +131,24 @@ pub fn init_lambda_env<'a>(
   Ok(
     Env {
       operations,
+      builtins: outer.builtins.clone(),
       parent_scope: Some(outer)
     }
   )
 }
 
 pub fn env_get(s: &str, env: &Env) -> Option<Expression> {
-  match env.operations.get(s) {
+  match env.builtins.get(s) {
     Some(expr) => Some(expr.clone()),
     None => {
-      match &env.parent_scope {
-        Some(outer) => env_get(s, &outer),
-        None => None
+      match env.operations.get(s) {
+        Some(expr) => Some(expr.clone()),
+        None => {
+          match &env.parent_scope {
+            Some(outer) => env_get(s, &outer),
+            None => None
+          }
+        }
       }
     }
   }
